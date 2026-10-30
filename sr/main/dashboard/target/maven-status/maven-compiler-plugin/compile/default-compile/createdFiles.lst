@@ -1,0 +1,13 @@
+com\traffic\dashboard\controller\DashboardController.class
+com\traffic\dashboard\model\DashboardSnapshot$PollutionStatus.class
+com\traffic\dashboard\DashboardApplication.class
+com\traffic\dashboard\model\DashboardSnapshot$ActiveAlert.class
+com\traffic\dashboard\service\DashboardDataService.class
+com\traffic\dashboard\model\DashboardSnapshot$LaneStatus.class
+com\traffic\dashboard\service\DashboardPushService.class
+com\traffic\dashboard\config\WebSocketConfig.class
+com\traffic\dashboard\model\DashboardSnapshot$Recommendation.class
+com\traffic\dashboard\model\DashboardSnapshot.class
+com\traffic\dashboard\model\DashboardSnapshot$AnalyticsItem.class
+com\traffic\dashboard\model\DashboardSnapshot$LightStatus.class
+com\traffic\dashboard\model\DashboardSnapshot$ZoneSummary.class

@@ -1,0 +1,4 @@
+com\traffic\db\dao\TrafficDataDAO.class
+com\traffic\db\DatabaseManager.class
+com\traffic\db\SimpleDriverDataSource.class
+com\traffic\db\dao\AlertDAO.class

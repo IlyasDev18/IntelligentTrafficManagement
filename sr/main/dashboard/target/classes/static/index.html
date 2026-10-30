@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CityPulse — Traffic Control Centre</title>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet"/>
+
+<!-- SockJS + STOMP -->
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<style>
+/* ═══════════════════════════════════════════════════════════
+   DESIGN SYSTEM — dark tactical / urban control-room aesthetic
+   Palette: deep navy background, amber accents, status neons
+═══════════════════════════════════════════════════════════ */
+:root {
+  --bg-deep:    #070b14;
+  --bg-panel:   #0d1424;
+  --bg-card:    #111928;
+  --bg-glass:   rgba(17,25,40,0.85);
+  --border:     rgba(255,180,0,0.12);
+  --border-hot: rgba(255,180,0,0.45);
+
+  --amber:      #ffb400;
+  --amber-dim:  #c88200;
+  --amber-glow: rgba(255,180,0,0.15);
+
+  --green:      #00f287;
+  --yellow:     #ffd740;
+  --orange:     #ff7043;
+  --red:        #ff1744;
+  --blue:       #40c4ff;
+  --purple:     #aa00ff;
+
+  --text-bright: #e8ecf0;
+  --text-mid:    #8899b0;
+  --text-dim:    #445566;
+
+  --font-mono:   'Share Tech Mono', monospace;
+  --font-head:   'Barlow Condensed', sans-serif;
+  --font-body:   'Barlow', sans-serif;
+
+  --panel-radius: 4px;
+  --glow-amber: 0 0 20px rgba(255,180,0,0.25);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }
+
+body {
+  background: var(--bg-deep);
+  color: var(--text-bright);
+  font-family: var(--font-body);
+  font-size: 13px;
+  height: 100vh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 52px 1fr;
+  grid-template-columns: 280px 1fr 300px;
+  grid-template-areas:
+    "header header header"
+    "left   center right";
+}
+
+/* ── Scanline overlay ───────────────────────────────────── */
+body::after {
+  content:'';
+  position:fixed; inset:0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.03) 2px,
+    rgba(0,0,0,0.03) 4px
+  );
+  pointer-events:none;
+  z-index:9999;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HEADER
+═══════════════════════════════════════════════════════════ */
+header {
+  grid-area: header;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-hot);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+  box-shadow: var(--glow-amber);
+}
+
+.logo {
+  font-family: var(--font-head);
+  font-weight: 900;
+  font-size: 22px;
+  letter-spacing: 3px;
+  color: var(--amber);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.logo span { color: var(--text-mid); font-weight: 300; }
+
+.header-zone {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+  letter-spacing: 1px;
+}
+
+.header-ts {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--amber);
+  letter-spacing: 1px;
+}
+
+.conn-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:0.5; transform:scale(0.85); }
+}
+
+.kpi-row {
+  display: flex;
+  gap: 20px;
+  margin-left: 24px;
+}
+.kpi {
+  text-align: center;
+  line-height: 1.1;
+}
+.kpi-val {
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--amber);
+}
+.kpi-lbl {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PANELS (shared)
+═══════════════════════════════════════════════════════════ */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+}
+
+.panel-title {
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--amber);
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,180,0,0.04);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LEFT COLUMN
+═══════════════════════════════════════════════════════════ */
+#left {
+  grid-area: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--amber-dim) transparent;
+}
+
+/* Congestion status banner */
+#congestion-banner {
+  padding: 10px 14px;
+  border-radius: 4px;
+  border: 1px solid;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: all 0.4s ease;
+}
+#congestion-banner .icon { font-size: 20px; }
+
+/* Lane cards */
+.lane-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 8px;
+}
+
+.lane-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 7px 9px;
+  cursor: pointer;
+  transition: border-color 0.25s, box-shadow 0.25s;
+  position: relative;
+  overflow: hidden;
+}
+.lane-card::before {
+  content:'';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--lane-color, var(--green));
+  box-shadow: 0 0 6px var(--lane-color, var(--green));
+}
+.lane-card:hover { border-color: var(--border-hot); }
+
+.lane-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.lane-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-bright);
+  letter-spacing: 0.5px;
+}
+.lane-flux {
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.lane-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+.lane-metric {
+  font-size: 10px;
+  color: var(--text-mid);
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.lane-metric-val {
+  font-family: var(--font-mono);
+  color: var(--text-bright);
+  font-size: 11px;
+}
+
+.lane-incident {
+  margin-top: 4px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+  color: var(--orange);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pollution card */
+#pollution-card {
+  padding: 10px 12px;
+}
+.poll-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.poll-pm25 {
+  font-family: var(--font-head);
+  font-weight: 900;
+  font-size: 36px;
+  line-height: 1;
+}
+.poll-unit {
+  font-size: 11px;
+  color: var(--text-mid);
+}
+.poll-aqi {
+  margin-left: auto;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+.poll-trend {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mid);
+  margin-top: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CENTRE — ROTARY MAP
+═══════════════════════════════════════════════════════════ */
+#center {
+  grid-area: center;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+#map-container {
+  flex: 1;
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#rotary-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ─ Chart row ────────────────────────────────────────────── */
+#chart-row {
+  height: 140px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.chart-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+}
+.chart-panel canvas { flex: 1; min-height: 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   RIGHT COLUMN
+═══════════════════════════════════════════════════════════ */
+#right {
+  grid-area: right;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 8px 8px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--amber-dim) transparent;
+}
+
+/* Alerts */
+#alerts-panel { flex-shrink: 0; }
+.alert-list { padding: 0; }
+
+.alert-item {
+  display: flex;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  align-items: flex-start;
+  animation: slide-in 0.3s ease;
+}
+@keyframes slide-in {
+  from { opacity:0; transform:translateX(10px); }
+  to   { opacity:1; transform:translateX(0); }
+}
+
+.alert-sev {
+  width: 3px;
+  border-radius: 2px;
+  align-self: stretch;
+  min-height: 24px;
+  flex-shrink: 0;
+}
+.alert-body { flex: 1; min-width: 0; }
+.alert-action {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-mid);
+  text-transform: uppercase;
+}
+.alert-reason {
+  font-size: 11px;
+  color: var(--text-bright);
+  line-height: 1.3;
+  margin: 2px 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.alert-target {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--amber-dim);
+}
+.alert-resolve {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  padding: 2px 5px;
+  border-radius: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.alert-resolve:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+/* Recommendations */
+#recs-panel { flex-shrink: 0; }
+.rec-list { padding: 4px; display: flex; flex-direction: column; gap: 4px; }
+.rec-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 7px 10px;
+  border-left: 3px solid;
+}
+.rec-title {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.rec-desc {
+  font-size: 10px;
+  color: var(--text-mid);
+  line-height: 1.4;
+}
+.rec-action {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  opacity: 0.7;
+}
+
+/* Traffic lights mini panel */
+#lights-panel { flex-shrink: 0; }
+.lights-grid {
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+  gap: 5px;
+  padding: 8px;
+}
+.light-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.light-dir {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-mid);
+  letter-spacing: 1px;
+}
+.light-housing {
+  width: 22px;
+  background: #111;
+  border-radius: 4px;
+  padding: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid #222;
+}
+.light-bulb {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  opacity: 0.15;
+  transition: opacity 0.3s, box-shadow 0.3s;
+}
+.light-bulb.red-b    { background: var(--red);    }
+.light-bulb.yellow-b { background: var(--yellow); }
+.light-bulb.green-b  { background: var(--green);  }
+.light-bulb.on { opacity: 1; }
+.light-bulb.red-b.on    { box-shadow: 0 0 10px var(--red); }
+.light-bulb.yellow-b.on { box-shadow: 0 0 10px var(--yellow); }
+.light-bulb.green-b.on  { box-shadow: 0 0 10px var(--green); }
+
+/* No data state */
+.no-data {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 60px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+/* Severity colors */
+.sev-CRITICAL { background: var(--red);    }
+.sev-HIGH     { background: var(--orange); }
+.sev-MEDIUM   { background: var(--yellow); }
+.sev-LOW      { background: var(--blue);   }
+.sev-INFO     { background: var(--text-dim); }
+
+.col-CRITICAL { color: var(--red);    }
+.col-HIGH     { color: var(--orange); }
+.col-MEDIUM   { color: var(--yellow); }
+.col-LOW      { color: var(--blue);   }
+
+.border-CRITICAL { border-left-color: var(--red);    }
+.border-HIGH     { border-left-color: var(--orange); }
+.border-MEDIUM   { border-left-color: var(--yellow); }
+.border-LOW      { border-left-color: var(--blue);   }
+.border-INFO     { border-left-color: var(--text-dim); }
+
+/* Flux colors */
+.flux-CONGESTED { color: var(--red);    }
+.flux-HIGH      { color: var(--orange); }
+.flux-OK        { color: var(--green);  }
+.flux-LOW       { color: var(--blue);   }
+.flux-HOURLY    { color: var(--text-mid); }
+
+/* AQI colors */
+.aqi-Good          { color: var(--green);  }
+.aqi-Moderate      { color: var(--yellow); }
+.aqi-Unhealthy     { color: var(--orange); }
+.aqi-VeryUnhealthy { color: var(--red);    }
+.aqi-Hazardous     { color: #ff00ff; }
+
+/* Congestion banner states */
+.cong-GREEN  { border-color: var(--green);  background: rgba(0,242,135,0.08); color: var(--green);  }
+.cong-YELLOW { border-color: var(--yellow); background: rgba(255,215,64,0.08); color: var(--yellow); }
+.cong-ORANGE { border-color: var(--orange); background: rgba(255,112,67,0.08); color: var(--orange); }
+.cong-RED    { border-color: var(--red);    background: rgba(255,23,68,0.12);  color: var(--red);
+               animation: cong-pulse 1.5s infinite; }
+@keyframes cong-pulse {
+  0%,100% { box-shadow: 0 0 0 rgba(255,23,68,0); }
+  50%     { box-shadow: 0 0 20px rgba(255,23,68,0.35); }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════ HEADER ═══════════════════════════════════════════════ -->
+<header>
+  <div class="logo">CityPulse <span>TCC</span></div>
+  <div class="header-zone" id="zone-label">MAIN-STREET-ROTARY</div>
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-val" id="kpi-vehicles">—</div><div class="kpi-lbl">Vehicles</div></div>
+    <div class="kpi"><div class="kpi-val" id="kpi-incidents">—</div><div class="kpi-lbl">Incidents</div></div>
+    <div class="kpi"><div class="kpi-val" id="kpi-alerts">—</div><div class="kpi-lbl">Alerts</div></div>
+    <div class="kpi"><div class="kpi-val" id="kpi-noise">—</div><div class="kpi-lbl">Avg dB</div></div>
+  </div>
+  <div class="header-ts" id="header-ts">--:--:--</div>
+  <div class="conn-dot" id="conn-dot" title="WebSocket connection"></div>
+</header>
+
+<!-- ═══════ LEFT COLUMN ══════════════════════════════════════════ -->
+<div id="left">
+
+  <!-- Congestion banner -->
+  <div id="congestion-banner" class="cong-GREEN">
+    <span class="icon">⬟</span>
+    <span id="cong-text">FLOW NORMAL</span>
+  </div>
+
+  <!-- Lane cards -->
+  <div class="panel">
+    <div class="panel-title">Lane Status</div>
+    <div class="lane-grid" id="lane-grid">
+      <div class="no-data">Waiting for data…</div>
+    </div>
+  </div>
+
+  <!-- Pollution -->
+  <div class="panel">
+    <div class="panel-title">Air Quality — PM2.5</div>
+    <div id="pollution-card">
+      <div class="poll-row">
+        <div class="poll-pm25 aqi-Good" id="poll-pm25">—</div>
+        <div class="poll-unit">µg/m³</div>
+        <div class="poll-aqi aqi-Good" id="poll-aqi">—</div>
+      </div>
+      <div class="poll-trend" id="poll-trend">trend: —</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════ CENTRE ════════════════════════════════════════════════ -->
+<div id="center">
+
+  <!-- Rotary map canvas -->
+  <div id="map-container">
+    <canvas id="rotary-canvas"></canvas>
+  </div>
+
+  <!-- Charts -->
+  <div id="chart-row">
+    <div class="chart-panel">
+      <div class="panel-title" style="padding:0 0 4px;border:none;background:none;font-size:9px;">
+        VEHICLE COUNT / LANE (LAST 30 min)
+      </div>
+      <canvas id="flow-chart"></canvas>
+    </div>
+    <div class="chart-panel">
+      <div class="panel-title" style="padding:0 0 4px;border:none;background:none;font-size:9px;">
+        PM2.5 TREND (LAST 30 min)
+      </div>
+      <canvas id="poll-chart"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════ RIGHT COLUMN ══════════════════════════════════════════ -->
+<div id="right">
+
+  <!-- Traffic lights -->
+  <div class="panel" id="lights-panel">
+    <div class="panel-title">Traffic Lights</div>
+    <div class="lights-grid" id="lights-grid">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- Recommendations -->
+  <div class="panel" id="recs-panel">
+    <div class="panel-title">Recommendations</div>
+    <div class="rec-list" id="rec-list">
+      <div class="no-data">No recommendations</div>
+    </div>
+  </div>
+
+  <!-- Active alerts -->
+  <div class="panel" id="alerts-panel">
+    <div class="panel-title">Active Alerts</div>
+    <div class="alert-list" id="alert-list">
+      <div class="no-data">No active alerts</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     JAVASCRIPT
+═══════════════════════════════════════════════════════════════ -->
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let lastSnap = null;
+const flowHistory   = {};  // laneId → [vehicleCount, ...]  (last 18 pts)
+const pollHistory   = { ts: [], pm25: [] };
+const MAX_PTS       = 18;
+
+// ── Clock ─────────────────────────────────────────────────────────────────
+setInterval(() => {
+  document.getElementById('header-ts').textContent =
+    new Date().toLocaleTimeString('fr-MA', { hour12: false });
+}, 1000);
+
+// ── WebSocket ─────────────────────────────────────────────────────────────
+const dot = document.getElementById('conn-dot');
+
+function connectWS() {
+  const sock   = new SockJS('/ws');
+  const client = Stomp.over(sock);
+  client.debug  = () => {};
+
+  client.connect({}, () => {
+    dot.style.background   = 'var(--green)';
+    dot.style.boxShadow    = '0 0 8px var(--green)';
+    dot.title              = 'Connected';
+
+    client.subscribe('/topic/dashboard', msg => {
+      const snap = JSON.parse(msg.body);
+      render(snap);
+    });
+  }, () => {
+    dot.style.background = 'var(--red)';
+    dot.style.boxShadow  = '0 0 8px var(--red)';
+    dot.title            = 'Disconnected — retrying…';
+    setTimeout(connectWS, 3000);
+  });
+}
+
+// Fallback: poll REST if WS is slow to connect
+fetch('/api/snapshot')
+  .then(r => r.ok ? r.json() : null)
+  .then(snap => { if (snap) render(snap); })
+  .catch(() => {});
+
+connectWS();
+
+// ── Main render ───────────────────────────────────────────────────────────
+function render(snap) {
+  lastSnap = snap;
+
+  renderHeader(snap.zoneSummary);
+  renderCongestionBanner(snap.zoneSummary);
+  renderLanes(snap.lanes || []);
+  renderLights(snap.trafficLights || []);
+  renderPollution(snap.pollution);
+  renderAlerts(snap.activeAlerts || []);
+  renderRecommendations(snap.recommendations || []);
+  updateCharts(snap);
+  drawRotaryMap(snap);
+}
+
+// ── Header KPIs ───────────────────────────────────────────────────────────
+function renderHeader(s) {
+  if (!s) return;
+  document.getElementById('kpi-vehicles').textContent  = s.totalVehicles ?? '—';
+  document.getElementById('kpi-incidents').textContent = s.activeIncidents ?? '—';
+  document.getElementById('kpi-alerts').textContent    = s.activeAlertCount ?? '—';
+  document.getElementById('kpi-noise').textContent     = s.avgNoise ? s.avgNoise.toFixed(1) : '—';
+}
+
+// ── Congestion banner ──────────────────────────────────────────────────────
+function renderCongestionBanner(s) {
+  if (!s) return;
+  const banner = document.getElementById('congestion-banner');
+  const text   = document.getElementById('cong-text');
+  const level  = s.congestionLevel || 'GREEN';
+  banner.className = 'cong-' + level;
+  const labels = { GREEN:'FLOW NORMAL', YELLOW:'MODERATE TRAFFIC', ORANGE:'HEAVY TRAFFIC', RED:'CRITICAL CONGESTION' };
+  const icons  = { GREEN:'⬟', YELLOW:'◈', ORANGE:'◉', RED:'⬟' };
+  banner.querySelector('.icon').textContent = icons[level] || '⬟';
+  text.textContent = labels[level] || level;
+}
+
+// ── Lane cards ────────────────────────────────────────────────────────────
+function renderLanes(lanes) {
+  const grid = document.getElementById('lane-grid');
+  if (!lanes.length) { grid.innerHTML = '<div class="no-data">No lane data</div>'; return; }
+
+  grid.innerHTML = lanes.map(l => {
+    const col    = l.statusColor || '#00f287';
+    const inc    = l.cameraStatus !== 'NORMAL'
+      ? `<div class="lane-incident">⚠ ${l.cameraStatus}</div>` : '';
+    return `
+    <div class="lane-card" style="--lane-color:${col}" onclick="showLaneDetail('${l.laneId}')">
+      <div class="lane-card-top">
+        <span class="lane-id">${l.laneId}</span>
+        <span class="lane-flux flux-${l.fluxLevel}">${l.fluxLevel}</span>
+      </div>
+      <div class="lane-metrics">
+        <div class="lane-metric"><span>🚗</span><span class="lane-metric-val">${l.vehicleCount}</span></div>
+        <div class="lane-metric"><span>🔊</span><span class="lane-metric-val">${l.noiseDb?.toFixed(1)}dB</span></div>
+      </div>
+      ${inc}
+    </div>`;
+  }).join('');
+}
+
+// ── Traffic lights ────────────────────────────────────────────────────────
+function renderLights(lights) {
+  const grid = document.getElementById('lights-grid');
+  const dirs  = ['NORTH','SOUTH','EAST','WEST'];
+
+  // Build a map by direction
+  const map = {};
+  lights.forEach(l => { map[l.direction] = l.state; });
+
+  grid.innerHTML = dirs.map(d => {
+    const state = map[d] || 'RED';
+    return `
+    <div class="light-block">
+      <div class="light-dir">${d[0]}</div>
+      <div class="light-housing">
+        <div class="light-bulb red-b    ${state==='RED'    ? 'on':''}"></div>
+        <div class="light-bulb yellow-b ${state==='YELLOW' ? 'on':''}"></div>
+        <div class="light-bulb green-b  ${state==='GREEN'  ? 'on':''}"></div>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:8px;color:var(--text-dim)">${state}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Pollution ──────────────────────────────────────────────────────────────
+function renderPollution(p) {
+  if (!p) return;
+  const pm25El  = document.getElementById('poll-pm25');
+  const aqiEl   = document.getElementById('poll-aqi');
+  const trendEl = document.getElementById('poll-trend');
+
+  pm25El.textContent = p.pm25.toFixed(1);
+  aqiEl.textContent  = p.aqiCategory;
+
+  const cls = 'aqi-' + p.aqiCategory.replace(/\s+/g,'');
+  pm25El.className   = 'poll-pm25 ' + cls;
+  aqiEl.className    = 'poll-aqi  ' + cls;
+
+  const arrow = p.trend === 'RISING' ? '↑' : p.trend === 'FALLING' ? '↓' : '→';
+  trendEl.textContent = `trend: ${arrow} ${p.trend}  slope: ${p.trendSlope?.toFixed(2)} µg/m³·tick`;
+}
+
+// ── Alerts ────────────────────────────────────────────────────────────────
+function renderAlerts(alerts) {
+  const list = document.getElementById('alert-list');
+  if (!alerts.length) {
+    list.innerHTML = '<div class="no-data">No active alerts ✓</div>';
+    return;
+  }
+  list.innerHTML = alerts.slice(0, 12).map(a => `
+    <div class="alert-item" id="alert-${a.id}">
+      <div class="alert-sev sev-${a.severity}"></div>
+      <div class="alert-body">
+        <div class="alert-action">${a.actionType}</div>
+        <div class="alert-reason">${a.reason}</div>
+        <div class="alert-target">${a.target}</div>
+      </div>
+      <button class="alert-resolve" onclick="resolveAlert(${a.id})">✓</button>
+    </div>`).join('');
+}
+
+function resolveAlert(id) {
+  fetch(`/api/alert/${id}/resolve`, { method:'POST' })
+    .then(() => { document.getElementById('alert-' + id)?.remove(); });
+}
+
+// ── Recommendations ────────────────────────────────────────────────────────
+function renderRecommendations(recs) {
+  const list = document.getElementById('rec-list');
+  if (!recs.length) {
+    list.innerHTML = '<div class="no-data">No recommendations</div>';
+    return;
+  }
+  list.innerHTML = recs.slice(0, 8).map(r => `
+    <div class="rec-item border-${r.severity}">
+      <div class="rec-title col-${r.severity}">${r.title}</div>
+      <div class="rec-desc">${r.description}</div>
+      <div class="rec-action col-${r.severity}">⟹ ${r.action}</div>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROTARY MAP (Canvas)
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  ROTARY MAP (Canvas) — REWRITTEN FROM ZERO
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  ROTARY MAP (Canvas) — FIXED CENTERING
+// ═══════════════════════════════════════════════════════════════
+function drawRotaryMap(snap) {
+  const canvas  = document.getElementById('rotary-canvas');
+  const cont    = document.getElementById('map-container');
+  canvas.width  = cont.clientWidth;
+  canvas.height = cont.clientHeight;
+
+  const ctx = canvas.getContext('2d');
+  const W   = canvas.width;
+  const H   = canvas.height;
+  const cx  = W / 2;
+  const cy  = H / 2;
+
+  // ── Sizing ───────────────────────────────────────────────────
+  const R      = Math.min(W, H) * 0.22;   // Rotary radius
+  const roadW  = R * 0.55;                // Road width
+  const laneW  = roadW / 2;               // Width of one lane
+
+  ctx.clearRect(0, 0, W, H);
+
+  // ── Background Grid ──────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(255,180,0,0.04)';
+  ctx.lineWidth   = 1;
+  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  // Build lookup maps
+  const laneMap  = {};
+  (snap.lanes || []).forEach(l => { laneMap[l.laneId] = l; });
+  const lightMap = {};
+  (snap.trafficLights || []).forEach(l => { lightMap[l.direction] = l.state; });
+
+  const dirs = [
+    { name:'NORTH', angle: -Math.PI/2 },
+    { name:'SOUTH', angle:  Math.PI/2 },
+    { name:'EAST',  angle:  0         },
+    { name:'WEST',  angle:  Math.PI   },
+  ];
+
+  // ════════════════════════════════════════════════════════════
+  // 1. DRAW ROAD SURFACES (BASE LAYER)
+  // ════════════════════════════════════════════════════════════
+  
+  ctx.fillStyle = '#1a2030'; // Asphalt color
+
+  // Draw the 4 straight roads
+  dirs.forEach(d => {
+    const startX = cx + Math.cos(d.angle) * R;
+    const startY = cy + Math.sin(d.angle) * R;
+    const len    = Math.max(W, H); 
+
+    ctx.save();
+    ctx.translate(startX, startY);
+    ctx.rotate(d.angle);
+    
+    // FIX: Use y = -roadW/2 to center the road on the start point
+    ctx.fillRect(0, -roadW/2, len, roadW); 
+    
+    ctx.restore();
+  });
+
+  // Draw the Rotary Ring base
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.lineWidth = roadW;
+  ctx.strokeStyle = '#1a2030';
+  ctx.stroke();
+
+  // ════════════════════════════════════════════════════════════
+  // 2. DRAW LANE COLORS (FLUX STATUS)
+  // ════════════════════════════════════════════════════════════
+  
+  const fluxColor = f => {
+    const m = { 
+      CONGESTED:'rgba(255,23,68,0.35)', 
+      HIGH:'rgba(255,112,67,0.25)',
+      OK:'rgba(0,242,135,0.15)',         
+      LOW:'rgba(64,196,255,0.1)' 
+    };
+    return m[f] || 'transparent';
+  };
+
+  dirs.forEach(d => {
+    const startX = cx + Math.cos(d.angle) * R;
+    const startY = cy + Math.sin(d.angle) * R;
+    const len    = Math.max(W, H);
+
+    const inKey   = d.name + '-IN';
+    const outKey  = d.name + '-OUT';
+    const inLane  = laneMap[inKey];
+    const outLane = laneMap[outKey];
+
+    ctx.save();
+    ctx.translate(startX, startY);
+    ctx.rotate(d.angle);
+
+    // FIX: Align lanes with the centered road
+    // Out lane is TOP half (negative Y)
+    if (outLane) {
+      ctx.fillStyle = fluxColor(outLane.fluxLevel);
+      ctx.fillRect(0, -roadW/2, len, laneW);
+    }
+    // In lane is BOTTOM half (positive Y)
+    if (inLane) {
+      ctx.fillStyle = fluxColor(inLane.fluxLevel);
+      ctx.fillRect(0, 0, len, laneW);
+    }
+    
+    ctx.restore();
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // 3. DRAW ROAD MARKINGS (BORDERS & LINES)
+  // ════════════════════════════════════════════════════════════
+
+  // Road Borders & Center Dashes
+  dirs.forEach(d => {
+    const startX = cx + Math.cos(d.angle) * R;
+    const startY = cy + Math.sin(d.angle) * R;
+    const len    = Math.max(W, H);
+
+    ctx.save();
+    ctx.translate(startX, startY);
+    ctx.rotate(d.angle);
+
+    // Border lines
+    ctx.strokeStyle = 'rgba(255,180,0,0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, -roadW/2); ctx.lineTo(len, -roadW/2); ctx.stroke(); // Top edge
+    ctx.beginPath(); ctx.moveTo(0,  roadW/2); ctx.lineTo(len,  roadW/2); ctx.stroke(); // Bottom edge
+
+    // Center dashed line
+    ctx.setLineDash([10, 10]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(len, 0); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+  });
+
+  // Rotary Borders
+  ctx.beginPath();
+  ctx.arc(cx, cy, R + roadW/2, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,180,0,0.3)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, R - roadW/2, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,180,0,0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // ════════════════════════════════════════════════════════════
+  // 4. DRAW CENTRAL ISLAND (TOP LAYER)
+  // ════════════════════════════════════════════════════════════
+  
+  const islandR = R - roadW/2 - 8;
+  
+  // Island glow
+  const grd = ctx.createRadialGradient(cx, cy, islandR*0.5, cx, cy, islandR);
+  grd.addColorStop(0, 'rgba(255,180,0,0.05)');
+  grd.addColorStop(1, 'transparent');
+  ctx.beginPath(); ctx.arc(cx, cy, islandR, 0, Math.PI*2); ctx.fillStyle = grd; ctx.fill();
+
+  // Island surface
+  ctx.beginPath();
+  ctx.arc(cx, cy, islandR, 0, Math.PI * 2);
+  ctx.fillStyle = '#0b1020';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,180,0,0.15)';
+  ctx.lineWidth   = 1;
+  ctx.stroke();
+
+  // Island Text
+  ctx.font = 'bold 9px "Share Tech Mono"';
+  ctx.fillStyle = 'rgba(255,180,0,0.5)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('MAIN', cx, cy - 10);
+  ctx.fillText('STREET', cx, cy);
+  ctx.fillText('ROTARY', cx, cy + 10);
+
+  // ════════════════════════════════════════════════════════════
+  // 5. DRAW TRAFFIC LIGHTS & INCIDENTS
+  // ════════════════════════════════════════════════════════════
+
+  dirs.forEach(d => {
+    const startX = cx + Math.cos(d.angle) * R;
+    const startY = cy + Math.sin(d.angle) * R;
+
+    // Traffic Light
+    const tlState = lightMap[d.name] || 'RED';
+    drawTrafficLight(ctx, startX, startY, d.angle, tlState);
+
+    // Direction Label
+    const lblDist = R + roadW + 20;
+    const lx = cx + Math.cos(d.angle) * lblDist;
+    const ly = cy + Math.sin(d.angle) * lblDist;
+    
+    ctx.fillStyle = 'rgba(255,180,0,0.6)';
+    ctx.font = 'bold 11px "Barlow Condensed"';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(d.name, lx, ly);
+  });
+
+  // ── Incident markers ──────────────────────────────────────────
+  (snap.lanes || []).forEach(l => {
+    if (l.cameraStatus === 'NORMAL') return;
+    
+    const dir    = l.laneId.split('-')[0];
+    const isIn   = l.laneId.endsWith('-IN');
+    const dInfo  = dirs.find(d => d.name === dir);
+    if (!dInfo) return;
+
+    // Position incident on the road
+    const dist   = R + roadW * (isIn ? 0.75 : 0.25);
+    const px     = cx + Math.cos(dInfo.angle) * dist;
+    const py     = cy + Math.sin(dInfo.angle) * dist;
+
+    const col = { 
+      ACCIDENT:'#ff1744', 
+      PEDESTRIAN_ON_ROAD:'#ff6d00',
+      STOPPED_VEHICLE:'#ffd740', 
+      WRONG_WAY:'#ff00ff',
+      DEBRIS_ON_ROAD:'#ffab00' 
+    }[l.cameraStatus] || '#ff1744';
+
+    // Pulsing ring
+    ctx.beginPath();
+    ctx.arc(px, py, 12 + (Date.now() % 1000) / 80, 0, Math.PI * 2);
+    ctx.strokeStyle = col + '66';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
+    // Solid dot
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+
+    // Icon
+    const icons = { 
+      ACCIDENT:'✕', 
+      PEDESTRIAN_ON_ROAD:'🚶', 
+      STOPPED_VEHICLE:'⏹',
+      WRONG_WAY:'↩', 
+      DEBRIS_ON_ROAD:'◆' 
+    };
+    ctx.font = 'bold 8px sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icons[l.cameraStatus] || '!', px, py);
+  });
+}
+
+// ── Helper: Draw Traffic Light ────────────────────────────────────────
+function drawTrafficLight(ctx, x, y, angle, state) {
+  // Position light slightly perpendicular to road
+  const offset = 20; 
+  const lx = x + Math.cos(angle + Math.PI/2) * offset;
+  const ly = y + Math.sin(angle + Math.PI/2) * offset;
+
+  const col = state === 'GREEN' ? '#00f287' : state === 'YELLOW' ? '#ffd740' : '#ff1744';
+
+  // Housing
+  ctx.fillStyle = '#111';
+  ctx.fillRect(lx - 4, ly - 4, 8, 8);
+
+  // Light
+  ctx.beginPath();
+  ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+  ctx.fillStyle = col;
+  ctx.fill();
+
+  // Glow
+  ctx.beginPath();
+  ctx.arc(lx, ly, 10, 0, Math.PI * 2);
+  const grd = ctx.createRadialGradient(lx, ly, 0, lx, ly, 10);
+  grd.addColorStop(0, col + 'aa');
+  grd.addColorStop(1, 'transparent');
+  ctx.fillStyle = grd;
+  ctx.fill();
+}
+function drawRoadLaneColor(ctx, sx, sy, ex, ey, angle, roadW, inLane, outLane) {
+  if (!inLane && !outLane) return;
+
+  const len     = Math.hypot(ex - sx, ey - sy);
+  const laneH   = roadW / 2 - 2;
+
+  const fluxColor = f => {
+    const m = { CONGESTED:'rgba(255,23,68,0.3)', HIGH:'rgba(255,112,67,0.25)',
+                OK:'rgba(0,242,135,0.1)',         LOW:'rgba(64,196,255,0.1)' };
+    return m[f] || 'rgba(0,0,0,0)';
+  };
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(angle);
+
+  if (outLane) {
+    ctx.fillStyle = fluxColor(outLane.fluxLevel);
+    ctx.fillRect(0, -roadW/2 + 1, len, laneH);
+  }
+  if (inLane) {
+    ctx.fillStyle = fluxColor(inLane.fluxLevel);
+    ctx.fillRect(0, 1, len, laneH);
+  }
+  ctx.restore();
+}
+
+
+// ── Animate rotary (pulse incidents) ────────────────────────────────────
+setInterval(() => { if (lastSnap) drawRotaryMap(lastSnap); }, 500);
+
+// ═══════════════════════════════════════════════════════════════
+//  CHARTS
+// ═══════════════════════════════════════════════════════════════
+const LANE_IDS = ['NORTH-IN','SOUTH-IN','EAST-IN','WEST-IN',
+                   'NORTH-OUT','SOUTH-OUT','EAST-OUT','WEST-OUT'];
+const LANE_COLORS = ['#00f287','#ff1744','#40c4ff','#ffd740',
+                      '#aa00ff','#ff6d00','#00bcd4','#ff4081'];
+
+// Flow chart
+const flowCtx = document.getElementById('flow-chart').getContext('2d');
+const flowChart = new Chart(flowCtx, {
+  type: 'line',
+  data: {
+    labels: Array(MAX_PTS).fill(''),
+    datasets: LANE_IDS.map((id, i) => ({
+      label: id,
+      data: Array(MAX_PTS).fill(null),
+      borderColor: LANE_COLORS[i],
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.4,
+    }))
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: {
+      labels: { color:'#8899b0', font:{ size:8, family:"'Share Tech Mono'" },
+                boxWidth:10, padding:8 }
+    }},
+    scales: {
+      x: { display: false },
+      y: { grid:{ color:'rgba(255,255,255,0.04)' },
+           ticks:{ color:'#8899b0', font:{ size:8 } }, beginAtZero:true }
+    },
+    animation: { duration: 200 }
+  }
+});
+
+// Pollution chart
+const pollCtx   = document.getElementById('poll-chart').getContext('2d');
+const pollChart = new Chart(pollCtx, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'PM2.5',
+      data: [],
+      borderColor: '#ffb400',
+      backgroundColor: 'rgba(255,180,0,0.08)',
+      fill: true,
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.4,
+    },{
+      label: 'Safe (35)',
+      data: [],
+      borderColor: 'rgba(0,242,135,0.3)',
+      borderWidth: 1,
+      borderDash: [4,4],
+      pointRadius: 0,
+      fill: false,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: {
+      labels: { color:'#8899b0', font:{ size:8, family:"'Share Tech Mono'" },
+                boxWidth:10, padding:8 }
+    }},
+    scales: {
+      x: { display: false },
+      y: { grid:{ color:'rgba(255,255,255,0.04)' },
+           ticks:{ color:'#8899b0', font:{ size:8 } }, beginAtZero:true }
+    },
+    animation: { duration: 200 }
+  }
+});
+
+function updateCharts(snap) {
+  // Flow chart
+  const laneMap = {};
+  (snap.lanes || []).forEach(l => { laneMap[l.laneId] = l; });
+
+  LANE_IDS.forEach((id, i) => {
+    if (!flowHistory[id]) flowHistory[id] = Array(MAX_PTS).fill(null);
+    const cnt = laneMap[id]?.vehicleCount ?? null;
+    flowHistory[id].push(cnt);
+    if (flowHistory[id].length > MAX_PTS) flowHistory[id].shift();
+    flowChart.data.datasets[i].data = [...flowHistory[id]];
+  });
+  flowChart.update('none');
+
+  // Poll chart
+  if (snap.pollution) {
+    const ts = new Date(snap.timestamp).toLocaleTimeString('fr-MA', { hour12:false });
+    pollHistory.ts.push(ts);
+    pollHistory.pm25.push(snap.pollution.pm25);
+    if (pollHistory.ts.length > MAX_PTS * 2) {
+      pollHistory.ts.shift(); pollHistory.pm25.shift();
+    }
+    pollChart.data.labels           = pollHistory.ts;
+    pollChart.data.datasets[0].data = pollHistory.pm25;
+    pollChart.data.datasets[1].data = pollHistory.ts.map(() => 35);
+    pollChart.update('none');
+  }
+}
+
+// ── Lane detail (click) ────────────────────────────────────────────────────
+function showLaneDetail(laneId) {
+  if (!lastSnap) return;
+  const l = (lastSnap.lanes || []).find(x => x.laneId === laneId);
+  if (!l) return;
+  const msg = [
+    `Lane: ${l.laneId}`,
+    `Flux: ${l.fluxLevel}`,
+    `Vehicles: ${l.vehicleCount}`,
+    `Noise: ${l.noiseDb?.toFixed(1)} dB`,
+    `Camera: ${l.cameraStatus}`,
+    l.cameraDetails ? `Details: ${l.cameraDetails}` : ''
+  ].filter(Boolean).join('\n');
+  // Simple toast overlay
+  showToast(msg);
+}
+
+function showToast(msg) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    Object.assign(t.style, {
+      position:'fixed', bottom:'20px', left:'50%', transform:'translateX(-50%)',
+      background:'var(--bg-card)', border:'1px solid var(--amber)',
+      color:'var(--text-bright)', fontFamily:'var(--font-mono)', fontSize:'11px',
+      padding:'12px 20px', borderRadius:'4px', zIndex:'10000',
+      whiteSpace:'pre', lineHeight:'1.6', boxShadow:'0 0 20px rgba(255,180,0,0.2)',
+      transition:'opacity 0.3s'
+    });
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = '0'; }, 3500);
+}
+</script>
+</body>
+</html>
